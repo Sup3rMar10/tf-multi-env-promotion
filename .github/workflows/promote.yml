@@ -1,0 +1,52 @@
+name: promote
+
+on:
+  pull_request:
+    paths: ["envs/**", "modules/**", ".github/workflows/promote.yml"]
+  push:
+    branches: [main]
+    paths: ["envs/**", "modules/**", ".github/workflows/promote.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev, stage, prod]
+    defaults:
+      run:
+        working-directory: envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - run: terraform fmt -check -recursive ../..
+      - run: terraform init -input=false
+      - run: terraform validate
+      - run: terraform plan -input=false -no-color
+
+  apply:
+    if: github.event_name == 'push'
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1             # one at a time, in this order
+      fail-fast: true             # a failure in dev stops stage and prod
+      matrix:
+        env: [dev, stage, prod]
+    environment: ${{ matrix.env }}  # give stage and prod required reviewers to gate promotion
+    defaults:
+      run:
+        working-directory: envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - run: terraform init -input=false
+      - run: terraform apply -input=false -auto-approve
